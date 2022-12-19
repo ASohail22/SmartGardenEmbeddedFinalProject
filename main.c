@@ -81,6 +81,8 @@ volatile long temp, tempRaw;
 volatile int IntDegF;
 volatile int IntDegC;
 volatile int testTemp = 4;
+char result[100];
+
 uint8_t MasterType2[TYPE_2_LENGTH] = { 0x00, 0x40 };
 uint8_t MasterType1[TDataLength] = { 8, 9 };
 uint8_t MasterType0[HDataLength] = { 11 };
@@ -93,8 +95,8 @@ unsigned long RawTemp = 0;
 float Temp = 0;
 unsigned long RawHumidity = 0;
 float Humidity = 0;
-char tempStr[16] = {"A               "};
-char humStr[16] = {"B                "};
+char tempStr[16] = { "A               " };
+char humStr[16] = { "B                " };
 
 char soilMoist[16] = { "B                " };
 uint16_t ADC_Result;
@@ -181,6 +183,7 @@ void Software_Trim();
 void port_init();
 void configureLED();
 void testLED();
+
 void uart_init(void)
 {
     UCA1CTLW0 |= UCSWRST;
@@ -198,11 +201,11 @@ void ConfigClocks(void)
     __delay_cycles(3);
     __bic_SR_register(SCG0);                // Enable FLL
     Software_Trim();             // Software Trim to get the best DCOFTRIM value
-    CSCTL4 = SELMS__DCOCLKDIV | SELA__REFOCLK; // set default REFO(~32768Hz) as ACLKsource, ACLK = 32768Hz
+    CSCTL4 = SELMS__DCOCLKDIV | SELA__REFOCLK; // set default REFO(~32768Hz) as ACLKsource ACLK = 32768Hz
     // default DCODIV as MCLK and SMCLK source
 }
 void strreverse(char *begin, char *end)
-// Function to reverse the order of the ASCII char array elements
+// Function to reverse the order of the ASCII char arrayelements
 {
     char aux;
     while (end > begin)
@@ -238,7 +241,6 @@ void port_init()
 
     P1DIR |= BIT0;
     ConfigClocks();
-    port_init();
     uart_init();
     P1OUT |= BIT0;
     P1SEL0 |= BIT6 | BIT7;                  // set 2-UART pin as second function
@@ -246,6 +248,7 @@ void port_init()
     P4SEL1 &= ~BIT2;                    // set 2-UART pin as second function
     P4SEL1 &= ~ BIT3;                    // set 2-UART pin as second function
 }
+
 void Software_Trim()
 {
     unsigned int oldDcoTap = 0xffff;
@@ -566,7 +569,7 @@ void testLED()
         P1OUT &= ~BIT2;
 
     }
-    else if(IntDegF >= 40 && IntDegF <= 49) //light yellow led P5.0
+    else if (IntDegF >= 40 && IntDegF <= 49) //light yellow led P5.0
     {
         P5OUT |= BIT0;
         P1OUT &= ~BIT2;
@@ -578,7 +581,6 @@ void testLED()
         P5OUT &= ~BIT0;
         P1OUT &= ~BIT1;
     }
-
 
 }
 
@@ -594,32 +596,63 @@ int main(void)
     configureADC();
     initGPIO();
     //blocks();
+    int m = 0;
     while (1)
     {
-        _BIC_SR(GIE); //turn off interrupts
-        int channel = ADCMCTL0 & 0b1111; //bit masking
-        ADCCTL0 |= ADCENC | ADCSC;
-        while (!(ADCIFG & ADCIFG0))
-            ; //start sampling and converting
-        __no_operation();
-
-        if (channel == 12)
+        //Transmit a check byte B
+        if (m == 0)
         {
-            ADC_Result = ADCMEM0;
-            temp = ADC_Result;
-            IntDegC = (temp - CALADC_15V_30C) * (85 - 30)
-                    / (CALADC_15V_85C - CALADC_15V_30C) + 30;
-            // Temperature in Fahrenheit
-            // Tf = (9/5)*Tc | 32
-            IntDegF = 9 * IntDegC / 5 + 32;
-            testLED();
-            __no_operation();
+            _delay_cycles(20000);
+            int acount = 0;
+            result[acount] = 'B';
+            while ((UCA1IFG & UCTXIFG) == 0)
+                ;
+            UCA1TXBUF = result[acount];            //Transmit the received data.
+            m++;
+            if (m == 1)
+            {
+                //initialize_Adc();
+                //PMMCTL0_H = PMMPW_H;   // Unlock the PMM registers read 2.2.8 &2.2.9form the
+                //PMMCTL2 |= INTREFEN | TSENSOREN | REFVSEL_0; // Enable internal 1.5V reference and temperature sensor
+                //ConfigureAdc_temp1();
+                _BIC_SR(GIE); //turn off interrupts
+                int channel = ADCMCTL0 & 0b1111; //bit masking
+                ADCCTL0 |= ADCENC | ADCSC;
+                while (!(ADCIFG & ADCIFG0))
+                    ; //start sampling and converting
+                __no_operation();
 
-        }
-        else if (channel == 4)
-        {
-            ADC_Result2 = ADCMEM0;
-            __no_operation();
+                if (channel == 12)
+                {
+                    ADC_Result = ADCMEM0;
+                    temp = ADC_Result;
+                    IntDegC = (temp - CALADC_15V_30C) * (85 - 30)
+                            / (CALADC_15V_85C - CALADC_15V_30C) + 30;
+                    // Temperature in Fahrenheit
+                    // Tf = (9/5)*Tc | 32
+                    IntDegF = 9 * IntDegC / 5 + 32;
+                    testLED();
+                    __no_operation();
+
+                }
+                else if (channel == 4)
+                {
+                    ADC_Result2 = ADCMEM0;
+                    __no_operation();
+                }
+                itoa(IntDegF, result, 10);
+                acount = 0;
+                while (result[acount] != '\0')
+                {
+                    while ((UCA1IFG & UCTXIFG) == 0)
+                        ;              //Wait Unitl the UART transmitteris ready
+                    //UCTXIFG
+                    UCA1TXBUF = result[acount++];  //Transmit the received data.
+                }
+                m = 0;
+                //m=2;
+            }
+
         }
         initI2C();
         initOled();
@@ -628,8 +661,44 @@ int main(void)
         output(soilMoist, tempStr);
 
         __no_operation();
-
     }
+
+    /*while (1)
+     {
+     _BIC_SR(GIE); //turn off interrupts
+     int channel = ADCMCTL0 & 0b1111; //bit masking
+     ADCCTL0 |= ADCENC | ADCSC;
+     while (!(ADCIFG & ADCIFG0))
+     ; //start sampling and converting
+     __no_operation();
+
+     if (channel == 12)
+     {
+     ADC_Result = ADCMEM0;
+     temp = ADC_Result;
+     IntDegC = (temp - CALADC_15V_30C) * (85 - 30)
+     / (CALADC_15V_85C - CALADC_15V_30C) + 30;
+     // Temperature in Fahrenheit
+     // Tf = (9/5)*Tc | 32
+     IntDegF = 9 * IntDegC / 5 + 32;
+     testLED();
+     __no_operation();
+
+     }
+     else if (channel == 4)
+     {
+     ADC_Result2 = ADCMEM0;
+     __no_operation();
+     }
+     initI2C();
+     initOled();
+     sprintf(tempStr, "&T: %i", IntDegF);
+     sprintf(soilMoist, "S: %i", ADC_Result2);
+     output(soilMoist, tempStr);
+
+     __no_operation();
+
+     }*/
 }
 
 //******************************************************************************
